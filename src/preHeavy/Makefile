@@ -10,4 +10,4 @@ directory:
 		@mkdir -p $(BIN_DIR)
 
 preHeavy:
-		$(CC) -I $(INCLUDE_DIR) $(EXEC_NAME).c -o $(BIN_DIR)/$(EXEC_NAME)
+		$(CC) -I $(INCLUDE_DIR) $(EXEC_NAME).c -o $(BIN_DIR)/$(EXEC_NAME) -lpthread
