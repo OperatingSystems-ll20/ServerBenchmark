@@ -17,6 +17,7 @@ typedef struct Data {
     int _terminate;
 } Data;
 
+char _execPath[PATH_MAX];
 static int _nProcesses;
 int *_childs;
 
@@ -32,11 +33,13 @@ int *_processedImages;
 int **_commSockets;
 
 static int getArgs(const int pArgc, char *pArgv[]);
+static void getExecutablePath(char *pArgv[]);
 
 /** Child functions **/
 static void handleSigTerm();
 static void handleSigCont();
 static int receiveSocket(int pChildSocket, int *pNewSocket);
+static int processImage(char *pImageToProcess, char *pImage);
 static void doWork();
 
 static void sendSocket(int pParentSocket, int pSocket);

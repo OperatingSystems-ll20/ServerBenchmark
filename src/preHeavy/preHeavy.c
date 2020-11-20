@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <unistd.h> 
+#include <python3.7m/Python.h>
 #include <preHeavy.h>
 
 static int getArgs(const int pArgc, char *pArgv[]){
@@ -21,6 +22,23 @@ static int getArgs(const int pArgc, char *pArgv[]){
         n = atoi(pArgv[1]);
     }
     return n;
+}
+
+static void getExecutablePath(char *pArgv[]){
+    char path_save[PATH_MAX];
+    // char abs_exe_path[PATH_MAX];
+    char *p;
+
+    if(!(p = strrchr(pArgv[0], '/')))
+        getcwd(_execPath, sizeof(_execPath));
+    else{
+        *p = '\0';
+        getcwd(path_save, sizeof(path_save));
+        chdir(pArgv[0]);
+        getcwd(_execPath, sizeof(_execPath));
+        chdir(path_save);
+    }
+    printf("Absolute path to executable is: %s\n", _execPath);
 }
 
 static void handleSigTerm(){
@@ -60,10 +78,55 @@ static int receiveSocket(int pChildSocket, int *pNewSocket){
     return 0;
 }
 
+static int processImage(char *pImageToProcess, char *pImage){
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Current working dir: %s\n", cwd);
+    }
+    setenv("PYTHONPATH",".",1);
+    PyObject *moduleString, *module, *dict, *sobelFunction, *args;
+    Py_Initialize();
+
+    PyObject* sysPath = PySys_GetObject((char*)"path");
+    char pythonDir[PATH_MAX];
+    strcpy(pythonDir, _execPath);
+    strcat(pythonDir, "/../python");
+    PyObject* programName = PyUnicode_FromString(pythonDir);
+    PyList_Append(sysPath, programName);
+    Py_DECREF(programName);
+
+    moduleString = PyUnicode_FromString((char*)"testSobel");
+    module = PyImport_Import(moduleString);
+
+    sobelFunction = PyObject_GetAttrString(module, (char*)"applySobel");
+
+    if(PyCallable_Check(sobelFunction)){
+        printf("Processing image\n");
+        args = Py_BuildValue("ss", pImageToProcess, pImage);
+        PyErr_Print();
+        PyObject_CallObject(sobelFunction, args);
+        PyErr_Print();
+    }
+    else {
+        printf("Image not processed\n");
+        PyErr_Print();
+    }
+
+    Py_DECREF(moduleString);
+    Py_DECREF(module);
+    Py_DECREF(sobelFunction);
+    Py_DECREF(args);   
+    Py_FinalizeEx();
+    printf("Exit from process image\n");
+    return 0; 
+}
+
 //Child function
 static void doWork(){
     int imageSize, transferSize, readSize, writeSize, ret;
+    int process = FALSE;
     char buffer[MAX_BUFFER];
+    char counterStr[32];
     char *reply = "OK";
 
     while (!_exitLoop){
@@ -82,6 +145,8 @@ static void doWork(){
             while(TRUE){
                 imageSize = transferSize = readSize = writeSize = 0;
                 bzero(buffer, MAX_BUFFER);
+                FILE *receivedImg;
+                char path[MAX_BUFFER];
 
                 ret = read(socket, &imageSize, sizeof(int));
                 if(ret < 0){
@@ -97,13 +162,50 @@ static void doWork(){
                 if(imageSize == -1) break;
 
                 printf("Process %d: Image size received = %d\n", _childID, imageSize);
+                strcpy(path, getenv("HOME"));
+                strcat(path, "/Escritorio/serverImage.jpg");
+                receivedImg = fopen(path, "w+");
+                if(receivedImg == NULL){
+                    printf("Process %d: Can't open FILE... Image will not be processed\n", _childID);
+                    while(transferSize < imageSize){
+                        do{
+                            readSize = read(socket, buffer, sizeof(buffer));
+                        } while(readSize < 0);
+                        transferSize += readSize;
+                    }
+                }
 
                 while(transferSize < imageSize){
                     do{
                         readSize = read(socket, buffer, sizeof(buffer));
                     } while(readSize < 0);
+                    writeSize = fwrite(buffer, 1, readSize, receivedImg);
+                    if(readSize != writeSize) printf("Process %d: Error writing image\n", _childID);
                     transferSize += readSize;
                 }
+                fclose(receivedImg);
+
+                char resultPath[PATH_MAX];
+                strcpy(resultPath, getenv("HOME"));
+                strcat(resultPath, "/Escritorio/received");
+                pthread_mutex_lock(_mutex);
+                if(*_processedImages < MAX_IMAGES-1){
+                    process = TRUE;
+                    sprintf(counterStr, "%d", *_processedImages);
+                    _processedImages++;                    
+                }
+                else {
+                    process = FALSE;
+                }
+                strcat(resultPath, counterStr);
+                strcat(resultPath, ".jpg");
+                pthread_mutex_unlock(_mutex);
+
+                if(processImage){
+                    processImage(path, resultPath);
+                }
+                
+                remove(path);
 
                 if(write(socket, reply, strlen(reply)) != strlen(reply)){
                     printf("*** Process %d: Error sending reply to client\n", _childID);
@@ -302,6 +404,7 @@ int main(int argc, char *argv[]){
         exit(1);
     }
 
+    getExecutablePath(argv);
     createSharedData();
     createProcesses();
     acceptConnections();
