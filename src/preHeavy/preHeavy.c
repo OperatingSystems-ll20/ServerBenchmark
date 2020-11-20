@@ -10,7 +10,6 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <unistd.h> 
-#include <python3.7m/Python.h>
 #include <preHeavy.h>
 
 static int getArgs(const int pArgc, char *pArgv[]){
@@ -78,13 +77,9 @@ static int receiveSocket(int pChildSocket, int *pNewSocket){
     return 0;
 }
 
-static int processImage(char *pImageToProcess, char *pImage){
-    char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        printf("Current working dir: %s\n", cwd);
-    }
+PyObject *initPython(){
     setenv("PYTHONPATH",".",1);
-    PyObject *moduleString, *module, *dict, *sobelFunction, *args;
+    PyObject *moduleString, *module, *dict, *sobelFunction;
     Py_Initialize();
 
     PyObject* sysPath = PySys_GetObject((char*)"path");
@@ -100,24 +95,32 @@ static int processImage(char *pImageToProcess, char *pImage){
 
     sobelFunction = PyObject_GetAttrString(module, (char*)"applySobel");
 
-    if(PyCallable_Check(sobelFunction)){
+    Py_DECREF(moduleString);
+    Py_DECREF(module);
+
+    return sobelFunction;
+}
+
+void exitPython(PyObject *pSobel){
+    Py_DECREF(pSobel); 
+    Py_FinalizeEx();
+}
+
+static int processImage(PyObject *pSobel, char *pImageToProcess, char *pImage){
+
+    if(PyCallable_Check(pSobel)){
         printf("Processing image\n");
-        args = Py_BuildValue("ss", pImageToProcess, pImage);
+        PyObject *args = Py_BuildValue("ss", pImageToProcess, pImage);
         PyErr_Print();
-        PyObject_CallObject(sobelFunction, args);
+        PyObject_CallObject(pSobel, args);
         PyErr_Print();
+        Py_DECREF(args); 
     }
     else {
         printf("Image not processed\n");
         PyErr_Print();
     }
-
-    Py_DECREF(moduleString);
-    Py_DECREF(module);
-    Py_DECREF(sobelFunction);
-    Py_DECREF(args);   
-    Py_FinalizeEx();
-    printf("Exit from process image\n");
+     
     return 0; 
 }
 
@@ -128,6 +131,7 @@ static void doWork(){
     char buffer[MAX_BUFFER];
     char counterStr[32];
     char *reply = "OK";
+    PyObject *sobelFunction = initPython();
 
     while (!_exitLoop){
         while(!_childsData[_childID]._doWork && !_childsData[_childID]._terminate) pause();
@@ -192,7 +196,7 @@ static void doWork(){
                 if(*_processedImages < MAX_IMAGES-1){
                     process = TRUE;
                     sprintf(counterStr, "%d", *_processedImages);
-                    _processedImages++;                    
+                    (*_processedImages)++;                    
                 }
                 else {
                     process = FALSE;
@@ -201,8 +205,10 @@ static void doWork(){
                 strcat(resultPath, ".jpg");
                 pthread_mutex_unlock(_mutex);
 
-                if(processImage){
-                    processImage(path, resultPath);
+                if(process){
+                    processImage(sobelFunction, path, resultPath);
+                    printf("To process: %s\n", path);
+                    printf("Result: %s\n", resultPath);
                 }
                 
                 remove(path);
@@ -217,17 +223,11 @@ static void doWork(){
 
         }
 
-        // pthread_mutex_lock(_mutex);
-        // if(*_processedImages < MAX_IMAGES-1){
-        //     (*_processedImages)++;
-        //     printf("Process %d incrementing counter. Counter = %d\n", _childID, *_processedImages);
-        // }
-        // pthread_mutex_unlock(_mutex);
-
         _childsData[_childID]._doWork = 0;
     }
     
-    printf("[son] pid %d with _childID %d exiting...\n", getpid(), _childID);
+    printf("Process %d exiting...\n", _childID);
+    exitPython(sobelFunction);
     // close(_commSockets[_childID][CHILD_SOCKET]);
     exit(0);
 }

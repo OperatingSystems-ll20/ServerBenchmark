@@ -1,6 +1,8 @@
 #ifndef _PRE_HEAVY_H
 #define _PRE_HEAVY_H
 
+#include <python3.7m/Python.h>
+
 #define TRUE 1
 #define FALSE 0
 #define PARENT_SOCKET 0
@@ -39,7 +41,9 @@ static void getExecutablePath(char *pArgv[]);
 static void handleSigTerm();
 static void handleSigCont();
 static int receiveSocket(int pChildSocket, int *pNewSocket);
-static int processImage(char *pImageToProcess, char *pImage);
+PyObject *initPython();
+void exitPython(PyObject *pSobel);
+static int processImage(PyObject *pSobel, char *pImageToProcess, char *pImage);
 static void doWork();
 
 static void sendSocket(int pParentSocket, int pSocket);
