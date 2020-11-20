@@ -27,12 +27,93 @@ static void handleSigTerm(){
     _exitLoop = 1;
 }
 
-static void handleSigCont(){}
+static void handleSigCont(){ return;}
 
+static int receiveSocket(int pChildSocket, int *pNewSocket){
+    struct msghdr m;
+    struct cmsghdr *cm;
+    struct iovec iov;
+    char dummy[100];
+    char buf[CMSG_SPACE(sizeof(int))];
+    ssize_t readlen;
+    int *fdlist;
+
+    iov.iov_base = dummy;
+    iov.iov_len = sizeof(dummy);
+    memset(&m, 0, sizeof(m));
+    m.msg_iov = &iov;
+    m.msg_iovlen = 1;
+    m.msg_controllen = CMSG_SPACE(sizeof(int));
+    m.msg_control = buf;
+    readlen = recvmsg(pChildSocket, &m, 0);
+    /* Do your error handling here in case recvmsg fails */
+    *pNewSocket = -1; /* Default: none was received */
+    for (cm = CMSG_FIRSTHDR(&m); cm; cm = CMSG_NXTHDR(&m, cm)) {
+        if (cm->cmsg_level == SOL_SOCKET && cm->cmsg_type == SCM_RIGHTS) {
+            // nfds = (cm->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+            fdlist = (int *)CMSG_DATA(cm);
+            *pNewSocket = *fdlist;
+            break;
+        }
+    }
+
+    return 0;
+}
+
+//Child function
 static void doWork(){
+    int imageSize, transferSize, readSize, writeSize, ret;
+    char buffer[MAX_BUFFER];
+    char *reply = "OK";
+
     while (!_exitLoop){
-        while(!_childsData[_childID]._doWork && !_childsData[_childID]._terminate) 
-            pause();
+        while(!_childsData[_childID]._doWork && !_childsData[_childID]._terminate) pause();
+
+        //Receive image
+        if(_childsData[_childID]._doWork){
+            int socket;
+            ret = receiveSocket(_commSockets[_childID][CHILD_SOCKET], &socket);
+            if(ret != 0) {
+                printf("*** Process %d: Error receiving new Socket from parent\n", _childID);
+                _childsData[_childID]._doWork = 0;
+                continue;
+            }
+
+            while(TRUE){
+                imageSize = transferSize = readSize = writeSize = 0;
+                bzero(buffer, MAX_BUFFER);
+
+                ret = read(socket, &imageSize, sizeof(int));
+                if(ret < 0){
+                    printf("*** Process %d: Error reading from socket\n", _childID);
+                    // close(socket);
+                    break;
+                }
+                if(imageSize == 0){
+                    printf("*** Process %d: Invalid image size received\n", _childID);
+                    // close(socket);
+                    break;
+                }
+                if(imageSize == -1) break;
+
+                printf("Process %d: Image size received = %d\n", _childID, imageSize);
+
+                while(transferSize < imageSize){
+                    do{
+                        readSize = read(socket, buffer, sizeof(buffer));
+                    } while(readSize < 0);
+                    transferSize += readSize;
+                }
+
+                if(write(socket, reply, strlen(reply)) != strlen(reply)){
+                    printf("*** Process %d: Error sending reply to client\n", _childID);
+                }
+            } 
+            _childsData[_childID]._doWork = 0;
+            close(socket);
+            // printf("Terminated comm with client\n");
+
+        }
 
         // pthread_mutex_lock(_mutex);
         // if(*_processedImages < MAX_IMAGES-1){
@@ -45,7 +126,32 @@ static void doWork(){
     }
     
     printf("[son] pid %d with _childID %d exiting...\n", getpid(), _childID);
+    // close(_commSockets[_childID][CHILD_SOCKET]);
     exit(0);
+}
+
+static void sendSocket(int pChildSocket, int pSocket){
+    struct msghdr m;
+    struct cmsghdr *cm;
+    struct iovec iov;
+    char buf[CMSG_SPACE(sizeof(int))];
+    char dummy[2];    
+
+    memset(&m, 0, sizeof(m));
+    m.msg_controllen = CMSG_SPACE(sizeof(int));
+    m.msg_control = &buf;
+    memset(m.msg_control, 0, m.msg_controllen);
+    cm = CMSG_FIRSTHDR(&m);
+    cm->cmsg_level = SOL_SOCKET;
+    cm->cmsg_type = SCM_RIGHTS;
+    cm->cmsg_len = CMSG_LEN(sizeof(int));
+    *((int *)CMSG_DATA(cm)) = pSocket;
+    m.msg_iov = &iov;
+    m.msg_iovlen = 1;
+    iov.iov_base = dummy;
+    iov.iov_len = 1;
+    dummy[0] = 0;   /* doesn't matter what data we send */
+    sendmsg(pChildSocket, &m, 0);
 }
 
 static void createSharedData(){
@@ -62,7 +168,6 @@ static void createSharedData(){
         _childsData[i]._busy = FALSE;
         _childsData[i]._doWork = FALSE;
         _childsData[i]._terminate = FALSE;
-        _childsData[i]._socket = 0;
         // pthread_condattr_init(&_childsData[i]->_condAttr);
         // pthread_condattr_setpshared(&_childsData[i]->_condAttr, PTHREAD_PROCESS_SHARED);
         // pthread_cond_init(&_childsData[i]->_cond, &_childsData[i]->_condAttr);
@@ -76,14 +181,24 @@ static void createSharedData(){
 
 static void createProcesses(){
     _childs = malloc(_nProcesses * sizeof(pid_t));
+    _commSockets = malloc(sizeof(int*) * _nProcesses);
+    for(int i = 0; i < _nProcesses; i++){
+        _commSockets[i] = malloc(sizeof(int) * 2);
+    }
+
     for(int i = 0; i < _nProcesses; i++){
         _childID = i;
+        socketpair(PF_LOCAL, SOCK_STREAM, 0, _commSockets[_childID]);
         _childs[i] = fork();
         if(_childs[i] == 0){
             printf("[son] pid %d with _childID %d\n", getpid(), _childID);
+            close(_commSockets[_childID][PARENT_SOCKET]);
             signal(SIGTERM, handleSigTerm);
             signal(SIGCONT, handleSigCont);
             doWork();
+        }
+        else{
+            close(_commSockets[_childID][CHILD_SOCKET]);
         }
     }
 }
@@ -109,7 +224,6 @@ static void acceptConnections(){
     int exitLoop = 0;
     struct sockaddr_in serverAddress, clientAddress;
     char input[100];
-
     fd_set readFds;
 
     socketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -130,11 +244,10 @@ static void acceptConnections(){
     listen(socketFD,5);
     clientLen = sizeof(clientAddress);
 
-    FD_ZERO(&readFds);
-    FD_SET(STDIN_FILENO, &readFds);
-    FD_SET(socketFD, &readFds);
-
     while(!exitLoop){
+        FD_ZERO(&readFds);
+        FD_SET(STDIN_FILENO, &readFds);
+        FD_SET(socketFD, &readFds);
         int available = select(socketFD+1, &readFds, NULL, NULL, NULL);
         if(available < 0){
             printf("Error on select\n");
@@ -146,15 +259,18 @@ static void acceptConnections(){
 
         else{
             if(FD_ISSET(STDIN_FILENO, &readFds)){
-                scanf("%s", input);
-                if(strcmp(input, "exit") == 0){
+                printf("TEST INPUT\n");
+                fgets(input, sizeof(input), stdin);
+                if(strncmp(input, "exit", 4) == 0){
                     printf("Terminating server...\n");
-                    break;
+                    exitLoop = 1;
                 }
             }
 
             if(FD_ISSET(socketFD, &readFds)){
+                printf("Test\n");
                 newSocketFD = accept(socketFD, (struct sockaddr *) &clientAddress, &clientLen);
+               
                 if (newSocketFD < 0) {
                     fprintf(stderr, "Error: Accepting a connection\n");
                     exitLoop = 1;
@@ -162,10 +278,11 @@ static void acceptConnections(){
                 }
 
                 for(int i = 0; i < _nProcesses; i++){
-                    if(!_childsData[i]._busy){
-                        _childsData[i]._socket = newSocketFD;
-                        _childsData[i]._doWork = 1;
+                    if(_childsData[i]._doWork == FALSE){
+                        sendSocket(_commSockets[i][PARENT_SOCKET], newSocketFD);
+                        _childsData[i]._doWork = TRUE;
                         kill(_childs[i], SIGCONT);
+                        break;
                     }
                 }
             }
@@ -188,6 +305,12 @@ int main(int argc, char *argv[]){
     createSharedData();
     createProcesses();
     acceptConnections();
+
+    for(int i = 0; i < _nProcesses; i++){
+        close(_commSockets[i][PARENT_SOCKET]);
+        free(_commSockets[i]);
+    }
+    free(_commSockets);
     
     return 0;
 }

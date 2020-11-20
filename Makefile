@@ -3,7 +3,10 @@ SRC_DIR = "./src"
 
 MAKE_FLAGS = --no-print-directory
 
-all: preHeavy 
+all: client preHeavy 
+
+client:
+		$(MAKE) $(MAKE_FLAGS) -C $(SRC_DIR)/client
 
 preHeavy:
 		@mkdir -p $(BIN_DIR)

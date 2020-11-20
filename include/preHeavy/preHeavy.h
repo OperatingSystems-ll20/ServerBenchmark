@@ -3,7 +3,10 @@
 
 #define TRUE 1
 #define FALSE 0
+#define PARENT_SOCKET 0
+#define CHILD_SOCKET 1
 #define MAX_IMAGES 100
+#define MAX_BUFFER 4096
 #define PORT 9000
 
 #define MAX(a,b) (((a)>(b))?(a):(b))
@@ -12,9 +15,6 @@ typedef struct Data {
     int _busy;
     int _doWork;
     int _terminate;
-    int _socket;
-    // pthread_condattr_t _condAttr;
-    // pthread_cond_t _cond;
 } Data;
 
 static int _nProcesses;
@@ -26,17 +26,20 @@ int _exitLoop;
 
 /** Shared **/
 Data *_childsData;
-int *_processedImages;
 pthread_mutex_t *_mutex;
 pthread_mutexattr_t _mutexAttr;
+int *_processedImages;
+int **_commSockets;
 
 static int getArgs(const int pArgc, char *pArgv[]);
 
 /** Child functions **/
 static void handleSigTerm();
 static void handleSigCont();
+static int receiveSocket(int pChildSocket, int *pNewSocket);
 static void doWork();
 
+static void sendSocket(int pParentSocket, int pSocket);
 static void createSharedData();
 static void createProcesses();
 static void killProcesses();
