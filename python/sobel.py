@@ -4,7 +4,8 @@ import sys
 import scipy
 from scipy import ndimage
 
-def applySobel(imagePath, destPath):
+
+def applySobel(imagePath):
     im = imageio.imread(imagePath)
     im = im.astype('int32')
     gray = lambda rgb : np.dot(rgb[... , :3] , [0.299 , 0.587, 0.114]) 
@@ -14,9 +15,12 @@ def applySobel(imagePath, destPath):
     mag = np.hypot(dx, dy)  # magnitude
     mag *= 255.0 / np.max(mag)  # normalize (Q&D)
     mag = mag.astype('uint8')
-    imageio.imwrite(destPath, mag)
+    return mag
 
+def saveImg(image, destPath):
+    imageio.imwrite(destPath, image)
 
 if __name__ == "__main__":
-    applySobel(sys.argv[1], sys.argv[2])
+    img = applySobel(sys.argv[1])
+    saveImg(img, sys.argv[2])
 
