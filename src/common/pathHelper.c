@@ -1,13 +1,15 @@
-#include <pathHelper.h>
+#include <dirent.h>
+#include <errno.h>
 #include <limits.h>
+#include <regex.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <dirent.h>
 #include <sys/stat.h>
-#include <regex.h>
 #include <unistd.h>
-#include <errno.h>
+
+#include <pathHelper.h>
+
 
 /**
  * Checks if a path corresponds to a directory
@@ -30,6 +32,13 @@ int checkPath(const char *pPath){
     else return 2;
 }
 
+
+/**
+ * @brief Obtains the absolute path where the executable is located
+ * 
+ * @param pArgv Main argv
+ * @param pExecPath Executable path (Reference)
+ */
 void getExecutablePath(char *pArgv[], char *pExecPath){
     char path_save[PATH_MAX];
     char execPath[PATH_MAX];
@@ -44,11 +53,21 @@ void getExecutablePath(char *pArgv[], char *pExecPath){
         getcwd(execPath, sizeof(execPath));
         chdir(path_save);
     }
-    printf("Calculated path is: %s\n", execPath);
     strncpy(pExecPath, execPath, sizeof(execPath));
-    printf("Absolute path to executable is: %s\n", pExecPath);
 }
 
+
+/**
+ * @brief Creates a directory
+ * 
+ * If the directory already exists, the
+ * operation is ignored
+ * 
+ * @param pPath Path of the new directory
+ * @return int Error code:
+ *             0 -> Success
+ *            -1 -> Error creating directory
+ */
 int createWorkDir(char *pPath){
     int result = 0;
     int exist = checkPath(pPath);
@@ -61,11 +80,14 @@ int createWorkDir(char *pPath){
 
 
 /**
- * Reads the name of all directories inside the base directory
+ * Reads the name of all subdirectories inside the given path
  * to determine the next id for the current work directory.
  *
  * @param  pPath Base directory
- * @return       Error code
+ * @return       Error code:
+ *               0 -> Success
+ *              -1 -> Could not open directory in 'pPath'
+ *              -2 -> Could not compile regex
  */
 int findNextDirectoryID(const char* pPath, int *pDirCounter) {
     regex_t regex;

@@ -41,9 +41,11 @@ static int createDirectories(char *pArgv[]);
 static void handleSigTerm();
 static void handleSigCont();
 static int receiveSocket(int pChildSocket, int *pNewSocket);
-static PyObject *initPython();
-void exitPython(PyObject *pSobel);
-static int processImage(PyObject *pSobel, char *pImageToProcess, char *pImage);
+static void initPython(PyObject **pSobelFunc, PyObject **pSaveFunc);
+void exitPython(PyObject *pSobel, PyObject *pSave);
+static PyObject *processImage(PyObject *pSobel, char *pImageToProcess);
+static void saveResultImage(PyObject *pSaveFunc, PyObject *pImage, char *pPath);
+static void getNewPath(char *pResultPath, char *pImageIdStr);
 static void doWork();
 
 static void sendSocket(int pParentSocket, int pSocket);

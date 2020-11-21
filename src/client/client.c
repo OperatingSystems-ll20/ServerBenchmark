@@ -80,8 +80,9 @@ static void *threadWork(void *pArg){
     int socketFD;
     int counter = 0;
     int readSize;
+    int rejected = 0;
     char buffer[MAX_BUFFER];
-    char serverReply[2];
+    char serverReply[32];
     ThreadData *data = (ThreadData*)pArg;
 
     socketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -92,7 +93,16 @@ static void *threadWork(void *pArg){
     }
 
     if( connect(socketFD, (struct sockaddr*)&data->_serverAddr, sizeof(data->_serverAddr)) == 0 ){
-        while(counter < _nCycles){
+        
+        //Receive notification from server
+        read(socketFD, &serverReply, sizeof(serverReply));
+        if(strcmp(serverReply, "REJECTED") == 0){
+            printf("Connection rejected from server\n");
+            rejected = 1;
+            close(socketFD);
+        }
+        
+        while(counter < _nCycles && !rejected){
             bzero(buffer, MAX_BUFFER);
             off_t offset = 0;
 
@@ -111,14 +121,19 @@ static void *threadWork(void *pArg){
                 offset += readSize;
             }
 
+            bzero(serverReply, 32);
             read(socketFD, &serverReply, sizeof(serverReply));
             printf("Response of server = %s\n", serverReply);
 
             counter++;
         }
-        int notifyServer = -1;
-        write(socketFD, (void*)&notifyServer, sizeof(int));
-        close(socketFD);
+
+        if(!rejected){
+            int notifyServer = -1;
+            write(socketFD, (void*)&notifyServer, sizeof(int));
+            close(socketFD);
+        }
+        
     }
     else {
         data->_result = -3;

@@ -1,20 +1,28 @@
+#include <arpa/inet.h>
+#include <locale.h>
+#include <netinet/in.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h> 
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <pthread.h>
 #include <unistd.h> 
-#include <pathHelper.h>
-#include <locale.h>
+
 #include <consts.h>
+#include <pathHelper.h>
 #include <preHeavy.h>
 
+/**
+ * @brief Get the number of heavy processes to spawn
+ * 
+ * @param pArgc  Main argc
+ * @param pArgv  Main argv
+ * @return int   Number of heavy processes
+ */
 static int getArgs(const int pArgc, char *pArgv[]){
     int n = 0;
     if(pArgc < 2 || pArgc > 2){
@@ -26,6 +34,16 @@ static int getArgs(const int pArgc, char *pArgv[]){
     return n;
 }
 
+/**
+ * @brief Create the directory tree of the current execution
+ * 
+ * @param pArgv Main argv
+ * @return int  Error code
+ *              0 -> Success
+ *             -1 -> Error creating main directory
+ *             -2 -> Error obtaining next directory ID
+ *             -3 -> Error creating directory of current execution
+ */
 static int createDirectories(char *pArgv[]){
     int ret = 0;
     int dirCount = 0;
@@ -53,12 +71,37 @@ static int createDirectories(char *pArgv[]){
     return 0;    
 }
 
+/**
+ * CHILD FUNCTION
+ * 
+ * @brief Custom handle for SIGTERM signal
+ * 
+ */
 static void handleSigTerm(){
     _exitLoop = 1;
 }
 
+/**
+ * CHILD FUNCTION
+ * 
+ * @brief Custom handle for SIGCONT signal
+ * 
+ */
 static void handleSigCont(){ return;}
 
+
+/**
+ * CHILD FUNCTION
+ * 
+ * @brief Receive a socket descriptor sended by the 
+ * parent process 
+ * 
+ * @param pChildSocket Comm socket with parent
+ * @param pNewSocket Socket received (reference)
+ * @return int Error code:
+ *             0 -> Success
+ *            -1 -> Error receiving socket descriptor
+ */
 static int receiveSocket(int pChildSocket, int *pNewSocket){
     struct msghdr m;
     struct cmsghdr *cm;
@@ -75,8 +118,8 @@ static int receiveSocket(int pChildSocket, int *pNewSocket){
     m.msg_iovlen = 1;
     m.msg_controllen = CMSG_SPACE(sizeof(int));
     m.msg_control = buf;
-    readlen = recvmsg(pChildSocket, &m, 0);
-    /* Do your error handling here in case recvmsg fails */
+    if(recvmsg(pChildSocket, &m, 0) == -1) return -1;
+ 
     *pNewSocket = -1; /* Default: none was received */
     for (cm = CMSG_FIRSTHDR(&m); cm; cm = CMSG_NXTHDR(&m, cm)) {
         if (cm->cmsg_level == SOL_SOCKET && cm->cmsg_type == SCM_RIGHTS) {
@@ -90,9 +133,18 @@ static int receiveSocket(int pChildSocket, int *pNewSocket){
     return 0;
 }
 
-static PyObject *initPython(){
+
+/**
+ * CHILD FUNCTION
+ * 
+ * @brief Initialize the embedded python environment
+ * 
+ * @param pSobelFunc PyObject of 'applySobel' function
+ * @param pSaveFunc PyObject of 'saveImg' function
+ */
+static void initPython(PyObject **pSobelFunc, PyObject **pSaveFunc){
     setenv("PYTHONPATH",".",1);
-    PyObject *moduleString, *module, *dict, *sobelFunction;
+    PyObject *moduleString, *module, *dict, *sobelFunction, *saveImgFunction;
     Py_Initialize();
 
     PyObject* sysPath = PySys_GetObject((char*)"path");
@@ -106,26 +158,40 @@ static PyObject *initPython(){
     moduleString = PyUnicode_FromString((char*)"sobel");
     module = PyImport_Import(moduleString);
 
-    sobelFunction = PyObject_GetAttrString(module, (char*)"applySobel");
+    *pSobelFunc = PyObject_GetAttrString(module, (char*)"applySobel");
+    *pSaveFunc = PyObject_GetAttrString(module, (char*)"saveImg");
 
     Py_DECREF(moduleString);
     Py_DECREF(module);
-
-    return sobelFunction;
 }
 
-void exitPython(PyObject *pSobel){
+
+/**
+ * @brief Finalizes the embedded python environment
+ * 
+ * @param pSobel PyObject of 'applySobel' function
+ * @param pSave PyObject of 'saveImg' function
+ */
+void exitPython(PyObject *pSobel, PyObject *pSave){
     Py_DECREF(pSobel); 
+    Py_DECREF(pSave);
     Py_FinalizeEx();
 }
 
-static int processImage(PyObject *pSobel, char *pImageToProcess, char *pImage){
 
+/**
+ * @brief Executes the "applySobel" funtion in python
+ * 
+ * @param pSobel PyObject of applySobel function
+ * @param pImageToProcess Path of the src image
+ * @return PyObject Resulting image after sobel filter
+ * 
+ */
+static PyObject *processImage(PyObject *pSobel, char *pImageToProcess){
+    PyObject *imgResult;
     if(PyCallable_Check(pSobel)){
-        printf("Processing image\n");
-        PyObject *args = Py_BuildValue("ss", pImageToProcess, pImage);
-        PyErr_Print();
-        PyObject_CallObject(pSobel, args);
+        PyObject *args = Py_BuildValue("(s)", pImageToProcess);
+        imgResult = PyObject_CallObject(pSobel, args);
         PyErr_Print();
         Py_DECREF(args); 
     }
@@ -133,20 +199,72 @@ static int processImage(PyObject *pSobel, char *pImageToProcess, char *pImage){
         printf("Image not processed\n");
         PyErr_Print();
     }
-     
-    return 0; 
+    return imgResult; 
 }
 
-//Child function
+
+/**
+ * @brief Calls the python function 'saveImg' to write the resulting
+ * image after applying the sobel filter
+ * 
+ * @param pSaveFunc PyObject of 'saveImg' function
+ * @param pImage PyObject with result image
+ * @param pPath Path where the image will be written
+ */
+static void saveResultImage(PyObject *pSaveFunc, PyObject *pImage, char *pPath){
+    if(PyCallable_Check(pSaveFunc)){
+        PyObject *args = Py_BuildValue("Ns", pImage, pPath);
+        PyObject_CallObject(pSaveFunc, args);
+        Py_DECREF(args);
+    }
+    else{
+        printf("Processed image not saved\n");
+        PyErr_Print();
+    }
+}
+
+/**
+ * CHILD FUNCTION
+ * 
+ * @brief Creates a new file name (complete path) where a processed
+ * image will be saved
+ * 
+ * @param pResultPath Resulting path (Reference)
+ * @param pImageIdStr Suffix added to the file name
+ */
+static void getNewPath(char *pResultPath, char *pImageIdStr){
+    strcpy(pResultPath, _currentWorkDir);
+    strcat(pResultPath, IMAGE_NAME); 
+    strcat(pResultPath, pImageIdStr);
+    strcat(pResultPath, IMAGE_EXTENSION); 
+}
+
+
+/**
+ * CHILD FUNCTION
+ * 
+ * @brief Main function executed by the child processes.
+ * 
+ * Handles the communication with a client. Upon awakening to
+ * handle a new connection, the process sends an acknowledgement
+ * to the client letting it know that the connection was accepted.
+ * 
+ */
 static void doWork(){
     int imageSize, transferSize, readSize, writeSize, ret;
-    int process = FALSE;
+    int saveImage = FALSE, connected = FALSE;
     char buffer[MAX_BUFFER];
     char tmpPath[PATH_MAX];
-    char resultPath[PATH_MAX];
+    char *resultPath = malloc(PATH_MAX);
     char imageIDStr[32];
-    char *reply = "OK";
-    PyObject *sobelFunction = initPython();
+    strcpy(tmpPath, _currentWorkDir);
+    strcat(tmpPath, "/tmp");
+    sprintf(imageIDStr, "%d", _childID);
+    strcat(tmpPath, imageIDStr);
+    strcat(tmpPath, IMAGE_EXTENSION);
+
+    PyObject *sobelFunction, *saveFunction; 
+    initPython(&sobelFunction, &saveFunction);
 
     while (!_exitLoop){
         while(!_childsData[_childID]._doWork && !_childsData[_childID]._terminate) pause();
@@ -160,13 +278,15 @@ static void doWork(){
                 _childsData[_childID]._doWork = 0;
                 continue;
             }
-
-            while(TRUE){
+            connected = TRUE;
+            //Send a notification to the client
+            if(write(socket, SERVER_REPLY, strlen(SERVER_REPLY)) != strlen(SERVER_REPLY)){
+                printf("*** Process %d: Error sending reply to client\n", _childID);
+                connected = FALSE;
+            }
+            while(connected){
                 imageSize = transferSize = readSize = writeSize = 0;
                 bzero(buffer, MAX_BUFFER);
-                bzero(tmpPath, PATH_MAX);
-                bzero(resultPath, PATH_MAX);
-                bzero(imageIDStr, 32);
                 FILE *receivedImg;
                 
                 ret = read(socket, &imageSize, sizeof(int));
@@ -180,12 +300,7 @@ static void doWork(){
                 }
                 if(imageSize == -1) break;
 
-                printf("Process %d: Image size received = %d\n", _childID, imageSize);
-                strcpy(tmpPath, _currentWorkDir);
-                strcat(tmpPath, "/tmp");
-                sprintf(imageIDStr, "%d", _childID);
-                strcat(tmpPath, imageIDStr);
-                strcat(tmpPath, IMAGE_EXTENSION);
+                //printf("--- Process %d: Image size received = %d\n", _childID, imageSize);
                 receivedImg = fopen(tmpPath, "w+"); //Unprocessed image
                 if(receivedImg == NULL){
                     printf("Process %d: Can't open FILE... Image will not be processed\n", _childID);
@@ -195,8 +310,10 @@ static void doWork(){
                         } while(readSize < 0);
                         transferSize += readSize;
                     }
+                    break;
                 }
 
+                //Receive image and write it to tmp
                 while(transferSize < imageSize){
                     do{
                         readSize = read(socket, buffer, sizeof(buffer));
@@ -207,50 +324,55 @@ static void doWork(){
                 }
                 fclose(receivedImg);
 
-                bzero(imageIDStr, 32);
-                strcpy(resultPath, _currentWorkDir);
-                strcat(resultPath, IMAGE_NAME);                
+                               
                 pthread_mutex_lock(_mutex);
                 if(*_processedImages < MAX_IMAGES){
-                    process = TRUE;
+                    saveImage = TRUE;
                     sprintf(imageIDStr, "%d", *_processedImages);
                     (*_processedImages)++;                    
                 }
                 else {
-                    process = FALSE;
+                    saveImage = FALSE;
                 }
                 pthread_mutex_unlock(_mutex);
-                strcat(resultPath, imageIDStr);
-                strcat(resultPath, IMAGE_EXTENSION);
 
-                if(process){
-                    processImage(sobelFunction, tmpPath, resultPath);
-                    printf("To process: %s\n", tmpPath);
-                    printf("Result: %s\n", resultPath);
+                PyObject *imageResult = processImage(sobelFunction, tmpPath);
+
+                if(saveImage) {
+                    getNewPath(resultPath, imageIDStr);
+                    saveResultImage(saveFunction, imageResult, resultPath);
+                    bzero(resultPath, PATH_MAX);
+                    bzero(imageIDStr, 32);
                 }
-    
                 remove(tmpPath); //Delete tmp image
 
                 //Reply to the client
-                if(write(socket, reply, strlen(reply)) != strlen(reply)){
+                if(write(socket, SERVER_REPLY, strlen(SERVER_REPLY)) != strlen(SERVER_REPLY)){
                     printf("*** Process %d: Error sending reply to client\n", _childID);
                 }
             } 
             _childsData[_childID]._doWork = 0;
             close(socket);
-            // printf("Terminated comm with client\n");
-
         }
 
+        //If _terminate is TRUE, child must end its execution
+        else if(_childsData[_childID]._terminate == TRUE) _exitLoop = TRUE;
         _childsData[_childID]._doWork = 0;
     }
     
-    printf("Process %d exiting...\n", _childID);
-    exitPython(sobelFunction);
-    // close(_commSockets[_childID][CHILD_SOCKET]);
+    printf("--- Process %d exiting...\n", _childID);
+    exitPython(sobelFunction, saveFunction);
+    close(_commSockets[_childID][CHILD_SOCKET]);
     exit(0);
 }
 
+
+/**
+ * @brief Sends a socket descriptor to one of the child process
+ * 
+ * @param pChildSocket Socket connected to the child process
+ * @param pSocket Socket descriptor to send
+ */
 static void sendSocket(int pChildSocket, int pSocket){
     struct msghdr m;
     struct cmsghdr *cm;
@@ -271,11 +393,15 @@ static void sendSocket(int pChildSocket, int pSocket){
     m.msg_iovlen = 1;
     iov.iov_base = dummy;
     iov.iov_len = 1;
-    dummy[0] = 0;   /* doesn't matter what data we send */
+    dummy[0] = 0;
     ssize_t ret = sendmsg(pChildSocket, &m, 0);
-    printf("Test!!!!!!! %lu\n", ret);
 }
 
+
+/**
+ * @brief Maps the shared memory used to communicate with the child processes
+ * 
+ */
 static void createSharedData(){
     int protection = PROT_READ | PROT_WRITE;
     int visibility = MAP_SHARED | MAP_ANONYMOUS;
@@ -290,9 +416,6 @@ static void createSharedData(){
         _childsData[i]._busy = FALSE;
         _childsData[i]._doWork = FALSE;
         _childsData[i]._terminate = FALSE;
-        // pthread_condattr_init(&_childsData[i]->_condAttr);
-        // pthread_condattr_setpshared(&_childsData[i]->_condAttr, PTHREAD_PROCESS_SHARED);
-        // pthread_cond_init(&_childsData[i]->_cond, &_childsData[i]->_condAttr);
     }
 
     pthread_mutexattr_init(&_mutexAttr);
@@ -300,7 +423,14 @@ static void createSharedData(){
     pthread_mutex_init(_mutex, &_mutexAttr);
 }
 
-
+/**
+ * @brief Creates all the child processes using fork.
+ * 
+ * Before forking, a socket pair is created to stablish
+ * a channel of communication with each child process, 
+ * through which the socket descriptors are send.
+ * 
+ */
 static void createProcesses(){
     _childs = malloc(_nProcesses * sizeof(pid_t));
     _commSockets = malloc(sizeof(int*) * _nProcesses);
@@ -313,7 +443,7 @@ static void createProcesses(){
         socketpair(PF_LOCAL, SOCK_STREAM, 0, _commSockets[_childID]);
         _childs[i] = fork();
         if(_childs[i] == 0){
-            printf("[son] pid %d with _childID %d\n", getpid(), _childID);
+            // printf("[son] pid %d with _childID %d\n", getpid(), _childID);
             close(_commSockets[_childID][PARENT_SOCKET]);
             signal(SIGTERM, handleSigTerm);
             signal(SIGCONT, handleSigCont);
@@ -325,6 +455,18 @@ static void createProcesses(){
     }
 }
 
+
+/**
+ * @brief Kill all the child processes
+ * 
+ * The flag '_terminate' of a child process is set to TRUE
+ * and then it is 'awakened' sending a SIGTERM signal. Upon
+ * checking the state of this flag, the process will exit its
+ * loop and finish execution.
+ * 
+ * This process is done for all the processes.
+ * 
+ */
 static void killProcesses(){
     for(int i = 0; i < _nProcesses; i++){
         _childsData[i]._terminate = 1;
@@ -333,6 +475,11 @@ static void killProcesses(){
     }
 }
 
+
+/**
+ * @brief Unmaps all the shared memory allocated
+ * 
+ */
 static void unmapSharedMem(){
     munmap(_processedImages, sizeof(int));
     munmap(_mutex, sizeof(pthread_mutex_t));
@@ -340,8 +487,31 @@ static void unmapSharedMem(){
 }
 
 
+/**
+ * @brief Main loop of parent process
+ * 
+ * The parent process stays in this loop, checking for
+ * new client connections or input from command line.
+ * 
+ * The process is asleep through the select() function, 
+ * which allows to monitor multiple file descriptors; in
+ * this case, monitors the socket binded to the port 9000
+ * and the file descriptor of stdin.
+ * 
+ * If there aren't any incoming connections through the socket
+ * or no input detected from command line, the process is asleep.
+ * 
+ * If the input received from stdin is 'exit', the server finishes
+ * its execution.
+ * 
+ * In the case that there no more process available to handle connections,
+ * the servers starts to 'reject' connections by sending an acknowledgement
+ * to the client and then closing the socket.
+ * 
+ */
 static void acceptConnections(){
     int socketFD, newSocketFD, ret;
+    int assigned = FALSE;
     socklen_t clientLen;
     int exitLoop = 0;
     struct sockaddr_in serverAddress, clientAddress;
@@ -376,36 +546,44 @@ static void acceptConnections(){
             killProcesses();
             close(newSocketFD);
             close(socketFD);
-            exit(-1);
+            exit(EXIT_FAILURE);
         }
 
         else{
             if(FD_ISSET(STDIN_FILENO, &readFds)){
-                printf("TEST INPUT\n");
                 fgets(input, sizeof(input), stdin);
                 if(strncmp(input, "exit", 4) == 0){
                     printf("Terminating server...\n");
-                    exitLoop = 1;
+                    exitLoop = TRUE;
+                    continue;
                 }
             }
 
             if(FD_ISSET(socketFD, &readFds)){
                 newSocketFD = accept(socketFD, (struct sockaddr *) &clientAddress, &clientLen);
-    
                 if (newSocketFD < 0) {
                     printf("Error: Accepting a connection\n");
-                    exitLoop = 1;
+                    exitLoop = TRUE;
                     continue;
                 }
 
+                //Connection is assigned to the first available process
                 for(int i = 0; i < _nProcesses; i++){
                     if(_childsData[i]._doWork == FALSE){
                         sendSocket(_commSockets[i][PARENT_SOCKET], newSocketFD);
                         _childsData[i]._doWork = TRUE;
                         kill(_childs[i], SIGCONT);
+                        assigned = TRUE;
                         break;
                     }
                 }
+
+                //Reject connection if all processes are busy
+                if(!assigned) {
+                    write(newSocketFD, SERVER_REJECT, strlen(SERVER_REJECT));
+                    close(newSocketFD);
+                }
+                assigned = FALSE;
             }
         }
     }
@@ -431,11 +609,13 @@ int main(int argc, char *argv[]){
         free(_currentWorkDir);
         exit(EXIT_FAILURE);
     }
-    printf("CURRENT WORK DIR = %s\n", _currentWorkDir);
+    printf("--- Work directory: %s\n\n", _currentWorkDir);
+
     createSharedData();
     createProcesses();
     acceptConnections();
 
+    //Free allocated memory
     for(int i = 0; i < _nProcesses; i++){
         close(_commSockets[i][PARENT_SOCKET]);
         free(_commSockets[i]);
