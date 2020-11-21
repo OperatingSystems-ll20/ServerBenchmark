@@ -1,2 +1,3 @@
 .directory
 /bin
+**/__pycache__
