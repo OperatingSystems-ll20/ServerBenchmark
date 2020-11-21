@@ -10,6 +10,9 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <unistd.h> 
+#include <pathHelper.h>
+#include <locale.h>
+#include <consts.h>
 #include <preHeavy.h>
 
 static int getArgs(const int pArgc, char *pArgv[]){
@@ -23,21 +26,31 @@ static int getArgs(const int pArgc, char *pArgv[]){
     return n;
 }
 
-static void getExecutablePath(char *pArgv[]){
-    char path_save[PATH_MAX];
-    // char abs_exe_path[PATH_MAX];
-    char *p;
+static int createDirectories(char *pArgv[]){
+    int ret = 0;
+    int dirCount = 0;
+    _execPath = malloc(PATH_MAX);
+    _currentWorkDir = malloc(PATH_MAX);
 
-    if(!(p = strrchr(pArgv[0], '/')))
-        getcwd(_execPath, sizeof(_execPath));
-    else{
-        *p = '\0';
-        getcwd(path_save, sizeof(path_save));
-        chdir(pArgv[0]);
-        getcwd(_execPath, sizeof(_execPath));
-        chdir(path_save);
-    }
-    printf("Absolute path to executable is: %s\n", _execPath);
+    getExecutablePath(pArgv, _execPath);
+
+    //Create directory: ServerBenchmark
+    strcpy(_currentWorkDir, getenv("HOME"));
+    strcat(_currentWorkDir, WORK_DIR);
+    ret = createWorkDir(_currentWorkDir);
+    if(ret != 0) return -1;
+
+    //Create directory: ServerBenchmark/preHeavyRun_#
+    ret = findNextDirectoryID(_currentWorkDir, &dirCount);
+    if(ret != 0) return -2;
+    strcat(_currentWorkDir, "/preHeavyRun_");
+    char countStr[32];
+    sprintf(countStr, "%d", dirCount);
+    strcat(_currentWorkDir, countStr);
+    ret = createWorkDir(_currentWorkDir);
+    if(ret != 0) return -3;
+
+    return 0;    
 }
 
 static void handleSigTerm(){
@@ -77,7 +90,7 @@ static int receiveSocket(int pChildSocket, int *pNewSocket){
     return 0;
 }
 
-PyObject *initPython(){
+static PyObject *initPython(){
     setenv("PYTHONPATH",".",1);
     PyObject *moduleString, *module, *dict, *sobelFunction;
     Py_Initialize();
@@ -90,7 +103,7 @@ PyObject *initPython(){
     PyList_Append(sysPath, programName);
     Py_DECREF(programName);
 
-    moduleString = PyUnicode_FromString((char*)"testSobel");
+    moduleString = PyUnicode_FromString((char*)"sobel");
     module = PyImport_Import(moduleString);
 
     sobelFunction = PyObject_GetAttrString(module, (char*)"applySobel");
@@ -129,14 +142,16 @@ static void doWork(){
     int imageSize, transferSize, readSize, writeSize, ret;
     int process = FALSE;
     char buffer[MAX_BUFFER];
-    char counterStr[32];
+    char tmpPath[PATH_MAX];
+    char resultPath[PATH_MAX];
+    char imageIDStr[32];
     char *reply = "OK";
     PyObject *sobelFunction = initPython();
 
     while (!_exitLoop){
         while(!_childsData[_childID]._doWork && !_childsData[_childID]._terminate) pause();
 
-        //Receive image
+        //Handle client
         if(_childsData[_childID]._doWork){
             int socket;
             ret = receiveSocket(_commSockets[_childID][CHILD_SOCKET], &socket);
@@ -149,26 +164,29 @@ static void doWork(){
             while(TRUE){
                 imageSize = transferSize = readSize = writeSize = 0;
                 bzero(buffer, MAX_BUFFER);
+                bzero(tmpPath, PATH_MAX);
+                bzero(resultPath, PATH_MAX);
+                bzero(imageIDStr, 32);
                 FILE *receivedImg;
-                char path[MAX_BUFFER];
-
+                
                 ret = read(socket, &imageSize, sizeof(int));
                 if(ret < 0){
                     printf("*** Process %d: Error reading from socket\n", _childID);
-                    // close(socket);
                     break;
                 }
                 if(imageSize == 0){
                     printf("*** Process %d: Invalid image size received\n", _childID);
-                    // close(socket);
                     break;
                 }
                 if(imageSize == -1) break;
 
                 printf("Process %d: Image size received = %d\n", _childID, imageSize);
-                strcpy(path, getenv("HOME"));
-                strcat(path, "/Escritorio/serverImage.jpg");
-                receivedImg = fopen(path, "w+");
+                strcpy(tmpPath, _currentWorkDir);
+                strcat(tmpPath, "/tmp");
+                sprintf(imageIDStr, "%d", _childID);
+                strcat(tmpPath, imageIDStr);
+                strcat(tmpPath, IMAGE_EXTENSION);
+                receivedImg = fopen(tmpPath, "w+"); //Unprocessed image
                 if(receivedImg == NULL){
                     printf("Process %d: Can't open FILE... Image will not be processed\n", _childID);
                     while(transferSize < imageSize){
@@ -189,30 +207,31 @@ static void doWork(){
                 }
                 fclose(receivedImg);
 
-                char resultPath[PATH_MAX];
-                strcpy(resultPath, getenv("HOME"));
-                strcat(resultPath, "/Escritorio/received");
+                bzero(imageIDStr, 32);
+                strcpy(resultPath, _currentWorkDir);
+                strcat(resultPath, IMAGE_NAME);                
                 pthread_mutex_lock(_mutex);
-                if(*_processedImages < MAX_IMAGES-1){
+                if(*_processedImages < MAX_IMAGES){
                     process = TRUE;
-                    sprintf(counterStr, "%d", *_processedImages);
+                    sprintf(imageIDStr, "%d", *_processedImages);
                     (*_processedImages)++;                    
                 }
                 else {
                     process = FALSE;
                 }
-                strcat(resultPath, counterStr);
-                strcat(resultPath, ".jpg");
                 pthread_mutex_unlock(_mutex);
+                strcat(resultPath, imageIDStr);
+                strcat(resultPath, IMAGE_EXTENSION);
 
                 if(process){
-                    processImage(sobelFunction, path, resultPath);
-                    printf("To process: %s\n", path);
+                    processImage(sobelFunction, tmpPath, resultPath);
+                    printf("To process: %s\n", tmpPath);
                     printf("Result: %s\n", resultPath);
                 }
-                
-                remove(path);
+    
+                remove(tmpPath); //Delete tmp image
 
+                //Reply to the client
                 if(write(socket, reply, strlen(reply)) != strlen(reply)){
                     printf("*** Process %d: Error sending reply to client\n", _childID);
                 }
@@ -253,7 +272,8 @@ static void sendSocket(int pChildSocket, int pSocket){
     iov.iov_base = dummy;
     iov.iov_len = 1;
     dummy[0] = 0;   /* doesn't matter what data we send */
-    sendmsg(pChildSocket, &m, 0);
+    ssize_t ret = sendmsg(pChildSocket, &m, 0);
+    printf("Test!!!!!!! %lu\n", ret);
 }
 
 static void createSharedData(){
@@ -370,11 +390,10 @@ static void acceptConnections(){
             }
 
             if(FD_ISSET(socketFD, &readFds)){
-                printf("Test\n");
                 newSocketFD = accept(socketFD, (struct sockaddr *) &clientAddress, &clientLen);
-               
+    
                 if (newSocketFD < 0) {
-                    fprintf(stderr, "Error: Accepting a connection\n");
+                    printf("Error: Accepting a connection\n");
                     exitLoop = 1;
                     continue;
                 }
@@ -398,13 +417,21 @@ static void acceptConnections(){
 }
 
 int main(int argc, char *argv[]){
+    int ret = 0;
     _nProcesses = getArgs(argc, argv);
     if(!_nProcesses || _nProcesses < 0) {
         printf("Invalid number of procesess\n");
         exit(1);
     }
 
-    getExecutablePath(argv);
+    ret = createDirectories(argv);
+    if(ret != 0){
+        printf("*** Error creating directories\n");
+        free(_execPath);
+        free(_currentWorkDir);
+        exit(EXIT_FAILURE);
+    }
+    printf("CURRENT WORK DIR = %s\n", _currentWorkDir);
     createSharedData();
     createProcesses();
     acceptConnections();
@@ -414,6 +441,8 @@ int main(int argc, char *argv[]){
         free(_commSockets[i]);
     }
     free(_commSockets);
+    free(_execPath);
+    free(_currentWorkDir);
     
     return 0;
 }

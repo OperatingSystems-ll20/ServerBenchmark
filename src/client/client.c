@@ -97,7 +97,7 @@ static void *threadWork(void *pArg){
             off_t offset = 0;
 
             //Send image size
-            printf("Image size: %d\n", _imageSize);
+            // printf("Image size: %d\n", _imageSize);
             if(write(socketFD, (void*)&_imageSize, sizeof(int)) < 0){
                 printf("*** Thread %d: Can't write to socket\n", data->_id);
                 data->_result = -2;

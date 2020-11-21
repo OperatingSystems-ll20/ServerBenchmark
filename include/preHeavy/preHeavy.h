@@ -11,7 +11,6 @@
 #define MAX_BUFFER 4096
 #define PORT 9000
 
-#define MAX(a,b) (((a)>(b))?(a):(b))
 
 typedef struct Data {
     int _busy;
@@ -19,7 +18,8 @@ typedef struct Data {
     int _terminate;
 } Data;
 
-char _execPath[PATH_MAX];
+char *_execPath;
+char *_currentWorkDir;
 static int _nProcesses;
 int *_childs;
 
@@ -35,13 +35,13 @@ int *_processedImages;
 int **_commSockets;
 
 static int getArgs(const int pArgc, char *pArgv[]);
-static void getExecutablePath(char *pArgv[]);
+static int createDirectories(char *pArgv[]);
 
 /** Child functions **/
 static void handleSigTerm();
 static void handleSigCont();
 static int receiveSocket(int pChildSocket, int *pNewSocket);
-PyObject *initPython();
+static PyObject *initPython();
 void exitPython(PyObject *pSobel);
 static int processImage(PyObject *pSobel, char *pImageToProcess, char *pImage);
 static void doWork();
