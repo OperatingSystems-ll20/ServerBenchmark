@@ -60,7 +60,7 @@ static int createDirectories(char *pArgv[]){
     if(ret != 0) return -1;
 
     //Create directory: ServerBenchmark/preHeavyRun_#
-    ret = findNextDirectoryID(_currentWorkDir, &dirCount);
+    ret = findNextDirectoryID(_currentWorkDir, &dirCount, DIR_REGEX);
     if(ret != 0) return -2;
     strcat(_currentWorkDir, "/preHeavyRun_");
     char countStr[32];

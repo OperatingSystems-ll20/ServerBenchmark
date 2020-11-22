@@ -9,6 +9,8 @@
 #define MAX_BUFFER 4096
 #define PORT 9000
 
+static const char *DIR_REGEX = "^preHeavyRun_[[:digit:]]+$";
+
 
 typedef struct Data {
     int _busy;
