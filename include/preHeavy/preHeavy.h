@@ -1,8 +1,6 @@
 #ifndef _PRE_HEAVY_H
 #define _PRE_HEAVY_H
 
-#include <python3.7m/Python.h>
-
 #define TRUE 1
 #define FALSE 0
 #define PARENT_SOCKET 0
@@ -41,10 +39,6 @@ static int createDirectories(char *pArgv[]);
 static void handleSigTerm();
 static void handleSigCont();
 static int receiveSocket(int pChildSocket, int *pNewSocket);
-static void initPython(PyObject **pSobelFunc, PyObject **pSaveFunc);
-void exitPython(PyObject *pSobel, PyObject *pSave);
-static PyObject *processImage(PyObject *pSobel, char *pImageToProcess);
-static void saveResultImage(PyObject *pSaveFunc, PyObject *pImage, char *pPath);
 static void getNewPath(char *pResultPath, char *pImageIdStr);
 static void doWork();
 

@@ -1,6 +1,6 @@
 INCLUDE_DIR = ../../include/preHeavy -I../../include/common
 BIN_DIR = ../../bin
-COMMON_SRC = ../common/pathHelper.c
+COMMON_SRC = ../common/pathHelper.c ../common/sobelPython.c
 
 EXEC_NAME = preHeavy
 CC = gcc
