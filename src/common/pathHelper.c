@@ -89,7 +89,7 @@ int createWorkDir(char *pPath){
  *              -1 -> Could not open directory in 'pPath'
  *              -2 -> Could not compile regex
  */
-int findNextDirectoryID(const char* pPath, int *pDirCounter) {
+int findNextDirectoryID(const char* pPath, int *pDirCounter, const char *pRegex) {
     regex_t regex;
     int ret, id;
     struct dirent* dent;
@@ -100,7 +100,7 @@ int findNextDirectoryID(const char* pPath, int *pDirCounter) {
         return -1;
     }
 
-    ret = regcomp(&regex, "^preHeavyRun_[[:digit:]]+$", REG_EXTENDED);
+    ret = regcomp(&regex, pRegex, REG_EXTENDED);
     if(ret){
         fprintf(stderr, "Could not compile regex\n");
         closedir(srcdir);
