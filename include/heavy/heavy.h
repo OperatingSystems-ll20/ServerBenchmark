@@ -12,6 +12,7 @@
 #define PORT 9001
 
 static const char *DIR_REGEX = "^heavyRun_[[:digit:]]+$";
+static const char *HEAVY_SERVER_DIR = "/Heavy_Server";
 
 char *_execPath;
 char *_currentWorkDir;

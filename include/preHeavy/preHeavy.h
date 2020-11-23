@@ -10,7 +10,7 @@
 #define PORT 9000
 
 static const char *DIR_REGEX = "^preHeavyRun_[[:digit:]]+$";
-
+static const char *PREHEAVY_SERVER_DIR = "/Pre_Heavy_Server";
 
 typedef struct Data {
     int _busy;
