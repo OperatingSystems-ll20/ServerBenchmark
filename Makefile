@@ -3,10 +3,13 @@ SRC_DIR = "./src"
 
 MAKE_FLAGS = --no-print-directory
 
-all: client heavy preHeavy 
+all: client sequential heavy preHeavy 
 
 client:
 		$(MAKE) $(MAKE_FLAGS) -C $(SRC_DIR)/client
+
+sequential:
+		$(MAKE) $(MAKE_FLAGS) -C $(SRC_DIR)/sequential
 
 heavy:
 		$(MAKE) $(MAKE_FLAGS) -C $(SRC_DIR)/heavy
