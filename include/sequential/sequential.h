@@ -13,6 +13,7 @@
 #define PORT 9002
 
 static const char *DIR_REGEX = "^sequentialRun_[[:digit:]]+$";
+static const char *SEQUENTIAL_SERVER_DIR = "/Sequential_Server";
 
 char *_execPath;
 char *_currentWorkDir;

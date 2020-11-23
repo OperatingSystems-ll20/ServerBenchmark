@@ -244,8 +244,9 @@ static void doWork(){
  * @return int  Error code
  *              0 -> Success
  *             -1 -> Error creating main directory
- *             -2 -> Error obtaining next directory ID
- *             -3 -> Error creating directory of current execution
+ *             -2 -> Error creating the server directory
+ *             -3 -> Error obtaining next directory ID
+ *             -4 -> Error creating directory of current execution
  */
 static int createDirectories(char *pArgv[]){
     int ret = 0;
@@ -261,15 +262,20 @@ static int createDirectories(char *pArgv[]){
     ret = createWorkDir(_currentWorkDir);
     if(ret != 0) return -1;
 
-    //Create directory: ServerBenchmark/sequentialRun_#
-    ret = findNextDirectoryID(_currentWorkDir, &dirCount, DIR_REGEX);
+    //Create directory: ServerBenchmark/Sequential_Server
+    strcat(_currentWorkDir, SEQUENTIAL_SERVER_DIR);
+    ret = createWorkDir(_currentWorkDir);
     if(ret != 0) return -2;
+
+    //Create directory: ServerBenchmark/Sequential_Server/sequentialRun_#
+    ret = findNextDirectoryID(_currentWorkDir, &dirCount, DIR_REGEX);
+    if(ret != 0) return -3;
     strcat(_currentWorkDir, "/sequentialRun_");
     char countStr[32];
     sprintf(countStr, "%d", dirCount);
     strcat(_currentWorkDir, countStr);
     ret = createWorkDir(_currentWorkDir);
-    if(ret != 0) return -3;
+    if(ret != 0) return -4;
 
     return 0; 
 }
