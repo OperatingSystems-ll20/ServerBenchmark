@@ -78,7 +78,7 @@ static void doWork(){
         }
         if(imageSize == -1) break;
 
-        printf("--- Process %lu: Image size received = %d\n", getpid(), imageSize);
+        // printf("--- Process %lu: Image size received = %d\n", getpid(), imageSize);
         receivedImg = fopen(tmpPath, "w+"); //Unprocessed image
         if(receivedImg == NULL){
             printf("Process %lu: Can't open FILE... Image will not be processed\n", getpid());
@@ -261,7 +261,7 @@ static void childTerminated(){
         pid = waitpid((pid_t)-1, NULL, WNOHANG);
         if(pid == 0) break;
         else if(pid == -1) break;
-        else printf("--- Child [%d] terminated\n", pid);
+        else printf("---- Child [%d] terminated\n", pid);
     }
 }
 

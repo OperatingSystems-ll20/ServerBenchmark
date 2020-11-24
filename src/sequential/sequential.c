@@ -134,7 +134,7 @@ static void doWork(){
         if(*_childDoWork){
             int socket;
             ret = receiveSocket(_commSockets[CHILD_SOCKET], &socket);
-            printf("--- New Socket received from parent\n");
+            // printf("--- New Socket received from parent\n");
             if(ret != 0) {
                 printf("*** Process %d: Error receiving new Socket from parent\n", _childPID);
                 *_childDoWork = FALSE;
@@ -219,7 +219,7 @@ static void doWork(){
             if(write(_pipes[CHILD_SOCKET], "READY", 5) != 5){
                 printf("*** Error sending READY message to parent");
             }
-            printf("--- Finished handling a client\n");
+            // printf("--- Finished handling a client\n");
 
         }//end if(_childDoWork)
 
