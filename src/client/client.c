@@ -14,7 +14,18 @@
 #include <pathHelper.h>
 #include <client.h>
 
-
+/**
+ * @brief Gets and validates the command line arguments
+ * 
+ * @param pArgc Main argc
+ * @param pArgv Main argv
+ * @return int Error code:
+ *             0 -> Success
+ *            -1 -> IP don't corresponds to a known host
+ *            -2 -> Image file doesn't exists
+ *            -3 -> Specified path don't corresponds to file
+ *            -4 -> Invalid port, number of threads or number of cycles
+ */
 static int getArgs(const int pArgc, char *pArgv[]){
     int result = 0;
     if(pArgc < 6 || pArgc > 6){
@@ -58,12 +69,31 @@ static int getArgs(const int pArgc, char *pArgv[]){
     }
 }
 
+
+/**
+ * @brief Creates the 'Results.txt' file
+ * 
+ * According to the specified server port, the file
+ * 'Results.txt' is created in the corresponding
+ * server work directory
+ * 
+ * @return FILE* File pointer
+ */
 static FILE *createFile(){
     FILE *fp;
     fp = fopen(_resultFilePath, "a");
     return fp;
 }
 
+
+
+/**
+ * @brief Creates the file path of 'Results.txt'
+ * 
+ * @return int Error code:
+ *             0 -> Success
+ *            -1 -> Error allocating memory
+ */
 static int getResultFilePath(){
     int ret = 0;
     _resultFilePath = malloc(PATH_MAX);
@@ -87,6 +117,32 @@ static int getResultFilePath(){
     return ret;
 }
 
+
+
+/**
+ * @brief Function executed by each thread
+ * 
+ * The thread open a new socket connection with the server
+ * and starts to sends the images.
+ * 
+ * The first validation done is read the socket to know if
+ * the server accept (OK) or reject (REJECTED) the connection.
+ * After this, the client starts to sends the images, first 
+ * sending the size of the image (in bytes) and then the
+ * images itself.
+ * 
+ * Finally the client reads the socket waiting for the 'OK'
+ * response of the server, meaning that it it done processing
+ * the image. 
+ * 
+ * The measurement of response time corresponds to the time
+ * that it took to the server to send the first confirmation
+ * to the client (OK or REJECTED).
+ * 
+ * 
+ * @param pArg ThreadData structure
+ * @return void* 
+ */
 static void *threadWork(void *pArg){
     int socketFD;
     int counter = 0;
@@ -115,7 +171,7 @@ static void *threadWork(void *pArg){
             data->_result = -2;
             close(socketFD);
         }
-        gettimeofday(&t3, NULL); //To determina response time
+        gettimeofday(&t3, NULL); //To measure response time
 
         while(counter < _nCycles && !rejected){
             bzero(buffer, MAX_BUFFER);
@@ -163,6 +219,19 @@ static void *threadWork(void *pArg){
     }
 }
 
+
+/**
+ * @brief Creates the pthreads that sends requests
+ * 
+ * Allocates the memory used for the list of threads
+ * and the list of ThreadData structures that holds 
+ * the data needed for each thread.
+ * 
+ * This function is used to take the first measurement
+ * of the total execution time of the threads.
+ * 
+ * @param pServerAddress Struct used to open a new socket connection
+ */
 static void createThreads(struct sockaddr_in *pServerAddress){
     _threads = malloc(sizeof(pthread_t)*_nThreads);
     _threadData = malloc(sizeof(ThreadData) * _nThreads);
@@ -180,6 +249,14 @@ static void createThreads(struct sockaddr_in *pServerAddress){
     }
 }
 
+
+/**
+ * @brief Waits for all spawn pthreads to terminate execution
+ * 
+ * This function is used to take the second measurement of
+ * the total execution time of the threads.
+ * 
+ */
 static void stopThreads(){
     for(int i = 0; i < _nThreads; i++){
         pthread_join(_threads[i], NULL);
@@ -187,6 +264,11 @@ static void stopThreads(){
     gettimeofday(&_globalT2, NULL);
 }
 
+
+/**
+ * @brief Dealloactes all the memory used
+ * 
+ */
 static void freeMemory(){
     free(_threads);
     free(_threadData);
@@ -212,6 +294,7 @@ int main(int argc, char *argv[]){
     createThreads(&serverAddr);
     stopThreads();
 
+    //Collect result data
     int totalRequests = 0;
     int goodRequests = 0;
     double globalTime = 0;
@@ -231,6 +314,7 @@ int main(int argc, char *argv[]){
         }
     }
     
+    //Write to file only if at least one thread finished execution correctly
     if(goodRequests != 0){
         globalTime = ((_globalT2.tv_usec - _globalT1.tv_usec)*1.0e-6) 
                     + (_globalT2.tv_sec - _globalT1.tv_sec);
