@@ -93,7 +93,7 @@ createPlot(files, servers, fig, 221, 1, 2,
 createPlot(files, servers, fig, 222, 1, 3, 
     "Average time (s)", "Requests", "Average time vs Number of requests")
 createPlot(files, servers, fig, 212, 0, 4, 
-    "Average response time (s)", "Hilos", "Response time vs Number of threads")
+    "Average response time (s)", "Client threads", "Response time vs Number client of threads")
 
 #Close all Results.txt files
 for f in files:
