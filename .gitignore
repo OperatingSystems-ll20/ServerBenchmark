@@ -1,3 +1,4 @@
 .directory
+.vscode
 /bin
 **/__pycache__
