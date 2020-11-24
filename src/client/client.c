@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <consts.h>
 #include <pathHelper.h>
 #include <client.h>
 
@@ -57,6 +58,35 @@ static int getArgs(const int pArgc, char *pArgv[]){
     }
 }
 
+static FILE *createFile(){
+    FILE *fp;
+    fp = fopen(_resultFilePath, "a");
+    return fp;
+}
+
+static int getResultFilePath(){
+    int ret = 0;
+    _resultFilePath = malloc(PATH_MAX);
+    if(_resultFilePath == NULL) ret = -1;
+    else{
+        strcpy(_resultFilePath, getenv("HOME"));
+        strcat(_resultFilePath, WORK_DIR);
+        switch(_serverPort){
+            case 9000:
+                strcat(_resultFilePath, "/Pre_Heavy_Server");
+                break;
+            case 9001:
+                strcat(_resultFilePath, "/Heavy_Server");
+                break;
+            case 9002:
+                strcat(_resultFilePath, "/Sequential_Server");
+                break;
+        }
+        strcat(_resultFilePath, "/Results.txt");
+    }
+    return ret;
+}
+
 static void *threadWork(void *pArg){
     int socketFD;
     int counter = 0;
@@ -64,7 +94,7 @@ static void *threadWork(void *pArg){
     int rejected = 0;
     char buffer[MAX_BUFFER];
     char serverReply[32];
-    struct timeval t1, t2;
+    struct timeval t1, t2, t3;
     ThreadData *data = (ThreadData*)pArg;
 
     socketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -85,7 +115,8 @@ static void *threadWork(void *pArg){
             data->_result = -2;
             close(socketFD);
         }
-        
+        gettimeofday(&t3, NULL); //To determina response time
+
         while(counter < _nCycles && !rejected){
             bzero(buffer, MAX_BUFFER);
             bzero(serverReply, 32);
@@ -109,7 +140,7 @@ static void *threadWork(void *pArg){
             bzero(serverReply, 32);
             read(socketFD, &serverReply, sizeof(serverReply));
             if(strcmp(serverReply, "OK") == 0){
-                printf("Response of server = %s\n", serverReply);
+                // printf("Response of server = %s\n", serverReply);
                 gettimeofday(&t2, NULL);
                 data->_nRequests++;
             }           
@@ -123,6 +154,7 @@ static void *threadWork(void *pArg){
             gettimeofday(&t2, NULL); //End time
             data->_totalTime = ((t2.tv_usec - t1.tv_usec)*1.0e-6) + (t2.tv_sec - t1.tv_sec);
             data->_averageTime = data->_totalTime / data->_nRequests;
+            data->_responseTime = ((t3.tv_usec - t1.tv_usec)*1.0e-6) + (t3.tv_sec - t1.tv_sec);
         }        
     }
     else {
@@ -140,8 +172,10 @@ static void createThreads(struct sockaddr_in *pServerAddress){
         _threadData[i]._id = i;
         _threadData[i]._serverAddr = *pServerAddress;
         _threadData[i]._result = 0;
+        _threadData[i]._nRequests = 0;
         _threadData[i]._totalTime = 0;
         _threadData[i]._averageTime = 0;
+        _threadData[i]._responseTime = 0;
         pthread_create(&_threads[i], NULL, threadWork, (void*)&_threadData[i]);
     }
 }
@@ -179,8 +213,11 @@ int main(int argc, char *argv[]){
     stopThreads();
 
     int totalRequests = 0;
+    int goodRequests = 0;
     double globalTime = 0;
     double globalAverage = 0;
+    double totalResponseTime = 0;
+    double averageResponseTime = 0;
 
     for(int i = 0; i < _nThreads; i++){
         if(_threadData[i]._result < 0){
@@ -188,22 +225,30 @@ int main(int argc, char *argv[]){
             break;
         }
         else{
-            printf("\n- Results of thread [%d]:\n", _threadData[i]._id);
-            printf("--- Number of requests: %d\n", _threadData[i]._nRequests);
-            printf("--- Average time: %.8f\n", _threadData[i]._averageTime);
+            goodRequests++;
             totalRequests += _threadData[i]._nRequests;
+            totalResponseTime += _threadData[i]._responseTime;
         }
     }
-
-    globalTime = ((_globalT2.tv_usec - _globalT1.tv_usec)*1.0e-6) 
+    
+    if(goodRequests != 0){
+        globalTime = ((_globalT2.tv_usec - _globalT1.tv_usec)*1.0e-6) 
                     + (_globalT2.tv_sec - _globalT1.tv_sec);
-    globalAverage = globalTime / totalRequests;
+        globalAverage = globalTime / totalRequests;
+        averageResponseTime = totalResponseTime / goodRequests;
 
-    printf("\n- Total number of requests: %d\n", totalRequests);
-    printf("- Total time: %.8f\n", globalTime);
-
-    printf("\n- Total number of requests: %d\n", totalRequests);
-    printf("- Average time : %.8f\n\n", globalAverage);
+        getResultFilePath();
+        FILE *fp = createFile();
+        if(fp){
+            fprintf(fp, "%d,%d,%.8f,%.8f,%.8f\n", 
+                goodRequests, totalRequests, globalTime, globalAverage, averageResponseTime);
+            fclose(fp);
+        }
+        else{
+            printf("Error writing results to file\n");
+        }
+    }
+    
 
     close(_imageFP);
     freeMemory();
