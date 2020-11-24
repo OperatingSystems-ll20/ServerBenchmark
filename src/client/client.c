@@ -1,36 +1,17 @@
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include <pathHelper.h>
 #include <client.h>
-
-/**
- * Checks if a path corresponds to a directory
- *
- * @param  pPath Path
- * @return       Result
- *                0 -> Directory exists
- *                1 -> Path is not a directory
- *                2 -> Path doesn exists
- */
-static int checkPath(const char *pPath){
-    DIR *dir = opendir(pPath);
-    if(dir){
-        closedir(dir);
-        return 0;
-    }
-    else if(errno == ENOTDIR)
-        return 1;
-
-    else return 2;
-}
 
 
 static int getArgs(const int pArgc, char *pArgv[]){
@@ -83,6 +64,7 @@ static void *threadWork(void *pArg){
     int rejected = 0;
     char buffer[MAX_BUFFER];
     char serverReply[32];
+    struct timeval t1, t2;
     ThreadData *data = (ThreadData*)pArg;
 
     socketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -91,26 +73,29 @@ static void *threadWork(void *pArg){
         printf("*** Thread %d: Can't open the socket\n", data->_id);
         return NULL;
     }
-
+    gettimeofday(&t1, NULL); //Start time
     if( connect(socketFD, (struct sockaddr*)&data->_serverAddr, sizeof(data->_serverAddr)) == 0 ){
+        
         
         //Receive notification from server
         read(socketFD, &serverReply, sizeof(serverReply));
         if(strcmp(serverReply, "REJECTED") == 0){
             printf("Connection rejected from server\n");
             rejected = 1;
+            data->_result = -2;
             close(socketFD);
         }
         
         while(counter < _nCycles && !rejected){
             bzero(buffer, MAX_BUFFER);
+            bzero(serverReply, 32);
             off_t offset = 0;
 
             //Send image size
             // printf("Image size: %d\n", _imageSize);
             if(write(socketFD, (void*)&_imageSize, sizeof(int)) < 0){
                 printf("*** Thread %d: Can't write to socket\n", data->_id);
-                data->_result = -2;
+                data->_result = -3;
                 break;
             }
 
@@ -123,33 +108,40 @@ static void *threadWork(void *pArg){
 
             bzero(serverReply, 32);
             read(socketFD, &serverReply, sizeof(serverReply));
-            printf("Response of server = %s\n", serverReply);
-
+            if(strcmp(serverReply, "OK") == 0){
+                printf("Response of server = %s\n", serverReply);
+                gettimeofday(&t2, NULL);
+                data->_nRequests++;
+            }           
             counter++;
         }
-
         if(!rejected){
             int notifyServer = -1;
             write(socketFD, (void*)&notifyServer, sizeof(int));
             close(socketFD);
-        }
-        
+
+            gettimeofday(&t2, NULL); //End time
+            data->_totalTime = ((t2.tv_usec - t1.tv_usec)*1.0e-6) + (t2.tv_sec - t1.tv_sec);
+            data->_averageTime = data->_totalTime / data->_nRequests;
+        }        
     }
     else {
-        data->_result = -3;
+        data->_result = -4;
         printf("*** Thread %d: Can't connect to server\n", data->_id);
     }
-
 }
 
 static void createThreads(struct sockaddr_in *pServerAddress){
     _threads = malloc(sizeof(pthread_t)*_nThreads);
     _threadData = malloc(sizeof(ThreadData) * _nThreads);
 
+    gettimeofday(&_globalT1, NULL);
     for(int i = 0; i < _nThreads; i++){
         _threadData[i]._id = i;
         _threadData[i]._serverAddr = *pServerAddress;
         _threadData[i]._result = 0;
+        _threadData[i]._totalTime = 0;
+        _threadData[i]._averageTime = 0;
         pthread_create(&_threads[i], NULL, threadWork, (void*)&_threadData[i]);
     }
 }
@@ -158,8 +150,7 @@ static void stopThreads(){
     for(int i = 0; i < _nThreads; i++){
         pthread_join(_threads[i], NULL);
     }
-
-    
+    gettimeofday(&_globalT2, NULL);
 }
 
 static void freeMemory(){
@@ -187,12 +178,32 @@ int main(int argc, char *argv[]){
     createThreads(&serverAddr);
     stopThreads();
 
+    int totalRequests = 0;
+    double globalTime = 0;
+    double globalAverage = 0;
+
     for(int i = 0; i < _nThreads; i++){
         if(_threadData[i]._result < 0){
             printf("*** Error: Some threads couldn't connect to the server\n");
             break;
         }
+        else{
+            printf("\n- Results of thread [%d]:\n", _threadData[i]._id);
+            printf("--- Number of requests: %d\n", _threadData[i]._nRequests);
+            printf("--- Average time: %.8f\n", _threadData[i]._averageTime);
+            totalRequests += _threadData[i]._nRequests;
+        }
     }
+
+    globalTime = ((_globalT2.tv_usec - _globalT1.tv_usec)*1.0e-6) 
+                    + (_globalT2.tv_sec - _globalT1.tv_sec);
+    globalAverage = globalTime / totalRequests;
+
+    printf("\n- Total number of requests: %d\n", totalRequests);
+    printf("- Total time: %.8f\n", globalTime);
+
+    printf("\n- Total number of requests: %d\n", totalRequests);
+    printf("- Average time : %.8f\n\n", globalAverage);
 
     close(_imageFP);
     freeMemory();

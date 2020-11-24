@@ -1,5 +1,6 @@
-INCLUDE_DIR = ../../include/client
+INCLUDE_DIR = ../../include/client -I../../include/common
 BIN_DIR = ../../bin
+COMMON_SRC = ../common/pathHelper.c
 
 EXEC_NAME = client
 CC = gcc
@@ -11,4 +12,4 @@ directory:
 		@mkdir -p $(BIN_DIR)
 
 client:
-		$(CC) -I $(INCLUDE_DIR) $(EXEC_NAME).c -o $(BIN_DIR)/$(EXEC_NAME) $(LINK_LIBS)
+		$(CC) -I $(INCLUDE_DIR) $(EXEC_NAME).c $(COMMON_SRC) -o $(BIN_DIR)/$(EXEC_NAME) $(LINK_LIBS)
