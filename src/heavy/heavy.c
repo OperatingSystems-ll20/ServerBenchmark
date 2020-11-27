@@ -129,7 +129,7 @@ static void doWork(){
 
     }//end while(connected)
 
-    printf("--- Process %lu exiting...\n", getpid());
+    // printf("--- Process %lu exiting...\n", getpid());
     exitPython(sobelFunction, saveFunction);
     close(_newSocketFD);
 }
@@ -261,7 +261,7 @@ static void childTerminated(){
         pid = waitpid((pid_t)-1, NULL, WNOHANG);
         if(pid == 0) break;
         else if(pid == -1) break;
-        else printf("---- Child [%d] terminated\n", pid);
+        // else printf("---- Child [%d] terminated\n", pid);
     }
 }
 

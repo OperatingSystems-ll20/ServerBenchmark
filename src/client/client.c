@@ -296,17 +296,15 @@ int main(int argc, char *argv[]){
 
     //Collect result data
     int totalRequests = 0;
-    int goodRequests = 0;
+    int goodRequests = 0, badRequests = 0;
     double globalTime = 0;
     double globalAverage = 0;
     double totalResponseTime = 0;
     double averageResponseTime = 0;
 
     for(int i = 0; i < _nThreads; i++){
-        if(_threadData[i]._result < 0){
-            printf("*** Error: Some threads couldn't connect to the server\n");
-            break;
-        }
+        if(_threadData[i]._result < 0) badRequests++;
+
         else{
             goodRequests++;
             totalRequests += _threadData[i]._nRequests;
@@ -332,6 +330,11 @@ int main(int argc, char *argv[]){
             printf("Error writing results to file\n");
         }
     }
+
+    if(badRequests > 0 && badRequests != _nThreads) 
+        printf("*** Warning: Some threads couldn't connect to the server\n");
+    else if(badRequests == _nThreads) 
+        printf("*** Error: The threads could not connect with the server\n");
     
 
     close(_imageFP);
